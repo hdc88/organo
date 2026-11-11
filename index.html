@@ -126,6 +126,9 @@ button,.knob,.wk,.bk{touch-action:manipulation;-webkit-tap-highlight-color:trans
   <div class="row"><label for="o_room">Ambiente</label><select id="o_room"></select></div>
   <div class="row"><label for="o_wet">Riverbero</label><input type="range" id="o_wet" min="0" max="0.8" step="0.01"></div>
   <div class="row"><label for="o_vol">Volume generale</label><input type="range" id="o_vol" min="0" max="1.5" step="0.01"></div>
+  <div class="row"><label for="o_quality">Motore audio<small>vale per tutti gli strumenti e per questo dispositivo</small></label><select id="o_quality"><option value="completo">Completo (PC)</option><option value="leggero">Leggero (tablet: meno scricchiolii)</option></select></div>
+  <div class="row"><label for="o_spk">Altoparlanti piccoli<small>taglia i bassi profondi che gli altoparlanti del tablet non riproducono e che li fanno gracchiare</small></label><span><input type="checkbox" id="o_spk"> attivo</span></div>
+  <p class="sub" id="o_qnote" hidden>Ricarica la pagina per applicare del tutto il nuovo motore audio.</p>
   <div class="btns"><button type="button" class="brass" id="o_reset">Valori storici dello strumento</button><button class="brass" value="ok">Chiudi</button></div>
 </form></dialog>
 
@@ -310,19 +313,23 @@ let sustainOn=false,octShift=0,expr=1,wind=1,pumpHold=false,pumpAcc=0,lastLoop=p
 const active=new Map();let weightSum=0;
 const waveCache=new Map();
 let lastMod=null,lastPB=null,midiNames=null,armed=false,combos=[];
+const IS_TOUCH=matchMedia('(pointer:coarse)').matches;
+let quality=load('quality',IS_TOUCH?'leggero':'completo'),smallSpk=load('smallspk',false);
+const light=()=>quality==='leggero';
 
 function store(k,v){try{localStorage.setItem('organo.'+k,JSON.stringify(v))}catch(e){}}
 function load(k,d){try{const v=localStorage.getItem('organo.'+k);return v?JSON.parse(v):d}catch(e){return d}}
 
 /* ===================== AUDIO ===================== */
 function initAudio(){
-  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
+  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:light()?'playback':'interactive'});
   const sr=ctx.sampleRate;
   noiseBuf=ctx.createBuffer(1,sr*2,sr);const nd=noiseBuf.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
   out.master=ctx.createGain();out.master.gain.value=vol;
   out.comp=ctx.createDynamicsCompressor();
   out.comp.threshold.value=-14;out.comp.knee.value=10;out.comp.ratio.value=4;out.comp.attack.value=.01;out.comp.release.value=.25;
-  out.master.connect(out.comp).connect(ctx.destination);
+  out.hp=ctx.createBiquadFilter();out.hp.type='highpass';out.hp.Q.value=.7;out.hp.frequency.value=smallSpk?110:10;
+  out.master.connect(out.hp).connect(out.comp).connect(ctx.destination);
   out.wind=ctx.createGain();out.dry=ctx.createGain();out.conv=ctx.createConvolver();out.wet=ctx.createGain();
   out.wind.connect(out.dry).connect(out.master);out.wind.connect(out.conv);out.conv.connect(out.wet).connect(out.master);
   out.fx=ctx.createGain();out.fx.connect(out.master);const fs=ctx.createGain();fs.gain.value=.3;out.fx.connect(fs).connect(out.conv);
@@ -379,12 +386,12 @@ function startPipe(key,st,note,ri){
   const o=ctx.createOscillator();o.setPeriodicWave(getWave(type,f));o.frequency.value=f;
   const base=(st.det||0)+(Math.random()*2-1)*(opt.rVento?2.5:.6);
   o.detune.setValueAtTime(base+(T.blip||0),t);o.detune.setTargetAtTime(base,t,atk*.5);
-  out.windDet.connect(o.detune);out.wob.connect(o.detune);D.tp.connect(o.detune);
+  const L=light();if(!L||opt.mantice)out.windDet.connect(o.detune);if(!L){out.wob.connect(o.detune);D.tp.connect(o.detune)}
   const g=ctx.createGain();g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(amp,t+atk);
   o.connect(g);g.connect(D.input);o.start(t);
   const p={o,g,rel,w:.4+Math.sqrt(feet)/4};
   if(!T.reed&&ri===0){
-    const chA=amp*T.chiff,brA=opt.rVento?amp*(T.br||0):0;
+    const chA=amp*T.chiff,brA=opt.rVento&&!L?amp*(T.br||0):0;
     if(chA>0||brA>0){
       const fc=Math.min(14000,f*T.cH),bw=fc/T.cQ,norm=1/(.577*Math.sqrt(bw/(ctx.sampleRate/2)));
       const s=ctx.createBufferSource();s.buffer=noiseBuf;s.loop=true;
@@ -477,7 +484,8 @@ function buildIR(sec){const sr=ctx.sampleRate,len=Math.floor(sr*sec)+1,pre=Math.
 /* ===================== OPZIONI ===================== */
 function applyOpts(retune){
   if(!ctx)return;
-  if(curRoom!==opt.room){out.conv.buffer=buildIR(ROOMS[opt.room].s);curRoom=opt.room}
+  const rk=opt.room+'|'+quality;if(curRoom!==rk){out.conv.buffer=buildIR(Math.min(ROOMS[opt.room].s,light()?3.2:99));curRoom=rk}
+  out.hp.frequency.setTargetAtTime(smallSpk?110:10,ctx.currentTime,.05);
   const t=ctx.currentTime;
   out.wet.gain.setTargetAtTime(opt.wet*1.5,t,.05);out.dry.gain.setTargetAtTime(1-opt.wet*.45,t,.05);
   out.master.gain.setTargetAtTime(vol,t,.05);out.wob.gain.setTargetAtTime(opt.rVento?1.6:0,t,.1);
@@ -613,7 +621,7 @@ function fillOpts(){
   const rs=$('#o_room');rs.innerHTML='';for(const k in ROOMS){const o=el('option','',ROOMS[k].n);o.value=k;rs.appendChild(o)}rs.value=opt.room;
   $('#o_pitch').value=String(opt.pitch);$('#o_pedal').value=opt.pedal;$('#r_pedal').style.display=INST.ped?'':'none';
   $('#o_mantice').checked=opt.mantice;$('#o_calcante').checked=opt.calcante;$('#o_tasti').checked=opt.rTasti;$('#o_vento').checked=opt.rVento;
-  $('#o_wet').value=opt.wet;$('#o_vol').value=vol;
+  $('#o_wet').value=opt.wet;$('#o_vol').value=vol;$('#o_quality').value=quality;$('#o_spk').checked=smallSpk;
 }
 $('#optBtn').onclick=()=>{fillOpts();$('#opts').showModal()};
 $('#o_temp').onchange=e=>{opt.temp=e.target.value;saveOpts();applyOpts(true);renderInfo()};
@@ -626,6 +634,8 @@ $('#o_vento').onchange=e=>{opt.rVento=e.target.checked;saveOpts();applyOpts(fals
 $('#o_room').onchange=e=>{opt.room=e.target.value;saveOpts();applyOpts(false)};
 $('#o_wet').oninput=e=>{opt.wet=+e.target.value;saveOpts();applyOpts(false)};
 $('#o_vol').oninput=e=>{vol=+e.target.value;saveOpts();applyOpts(false)};
+$('#o_quality').onchange=e=>{quality=e.target.value;store('quality',quality);$('#o_qnote').hidden=!ctx;applyOpts(true)};
+$('#o_spk').onchange=e=>{smallSpk=e.target.checked;store('smallspk',smallSpk);applyOpts(false)};
 $('#o_reset').onclick=()=>{opt=normOpt(Object.assign({tonic:2},INST.defOpt));saveOpts();applyOpts(true);fillOpts();renderCtrls();renderInfo()};
 
 /* ----- tastiera del computer ----- */
