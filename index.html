@@ -126,7 +126,7 @@ button,.knob,.wk,.bk{touch-action:manipulation;-webkit-tap-highlight-color:trans
   <div class="row"><label for="o_room">Ambiente</label><select id="o_room"></select></div>
   <div class="row"><label for="o_wet">Riverbero</label><input type="range" id="o_wet" min="0" max="0.8" step="0.01"></div>
   <div class="row"><label for="o_vol">Volume generale</label><input type="range" id="o_vol" min="0" max="1.5" step="0.01"></div>
-  <div class="row"><label for="o_quality">Motore audio<small>vale per tutti gli strumenti e per questo dispositivo</small></label><select id="o_quality"><option value="completo">Completo (PC)</option><option value="leggero">Leggero (tablet: meno scricchiolii)</option></select></div>
+  <div class="row"><label for="o_quality">Motore audio<small>vale per tutti gli strumenti e per questo dispositivo</small></label><select id="o_quality"><option value="completo">Completo (PC)</option><option value="leggero">Leggero (tablet: un oscillatore per nota)</option></select></div>
   <div class="row"><label for="o_spk">Altoparlanti piccoli<small>taglia i bassi profondi che gli altoparlanti del tablet non riproducono e che li fanno gracchiare</small></label><span><input type="checkbox" id="o_spk"> attivo</span></div>
   <p class="sub" id="o_qnote" hidden>Ricarica la pagina per applicare del tutto il nuovo motore audio.</p>
   <div class="btns"><button type="button" class="brass" id="o_reset">Valori storici dello strumento</button><button class="brass" value="ok">Chiudi</button></div>
@@ -415,6 +415,64 @@ function stopPipe(key,p,fast){
 function stopAll(fast){if(!ctx){active.clear();return}for(const [k,p] of [...active])stopPipe(k,p,fast);weightSum=0}
 function restartAll(){stopAll(true);sync()}
 
+/* ===================== MOTORE LEGGERO =====================
+   Tutti i registri tirati di una divisione, per ogni nota, diventano UN solo oscillatore:
+   le file (8', 4', 2 2/3', ripieni...) sono armoniche esatte della canna più grave, quindi
+   si sommano in un'unica forma d'onda. Ance e voci celesti restano gruppi separati. */
+const gwCache=new Map();
+function groupDesired(want){
+  const groups=new Map();
+  for(const [st,n,ri] of want.values()){
+    const type=st.t==='drone'?st.tt:st.t;
+    const fam=st.det?'d'+st.id:(TYPES[type].reed?'r':'f');
+    const gk=st.d+'|'+n+'|'+fam;
+    let g=groups.get(gk);if(!g){g={d:st.d,n,m:[]};groups.set(gk,g)}
+    g.m.push([st,ri]);
+  }
+  const res=new Map();
+  for(const [gk,g] of groups){const sig=g.m.map(x=>x[0].id+':'+x[1]).sort().join(',');res.set('G|'+gk+'|'+sig,g)}
+  return res;
+}
+function startGroup(key,g){
+  const D=divs[g.d];if(!D){active.set(key,{dead:1,w:0});return}
+  const f8=noteFreq(g.n);const R=[];let maxFt=8;
+  for(const [st,ri] of g.m){const type=st.t==='drone'?st.tt:st.t;const feet=st.r[ri];let fr=f8*8/feet;
+    if(st.brk)while(fr>st.brk)fr/=2;if(fr>10000||fr<14)continue;R.push({st,ri,type,feet,fr});if(feet>maxFt)maxFt=feet}
+  if(!R.length){active.set(key,{dead:1,w:0});return}
+  const fb=f8*8/maxFt;let M=1;
+  for(;M<32;M*=2)if(R.every(r=>{const x=r.fr/fb*M;return Math.abs(x-Math.round(x))<1e-3}))break;
+  const f0=fb/M;const ck=key+'|'+f0.toFixed(3);let w=gwCache.get(ck);
+  if(!w){
+    const N=Math.max(1,Math.min(2000,Math.floor(18000/f0)));const re=new Float32Array(N+1),im=new Float32Array(N+1);
+    for(const r of R){const H=TYPES[r.type].h;const k=Math.round(r.fr/f0);const amp=.12*r.st.g*pitchComp(r.fr);
+      const hs=[];let e=0;for(let h=1;h*k<=N&&h<=64;h++){const fn=h*r.fr;const a=Math.max(0,H(h,fn))/(1+Math.pow(fn/9000,2));hs.push(a);e+=a*a}
+      const sc=amp*.5/Math.sqrt(e/2||1);const seed=r.ri*7+r.st.id.length*13+r.st.id.charCodeAt(0);
+      hs.forEach((a,i)=>{const h=i+1,ph=hash(h+seed)*6.2832;re[h*k]+=a*sc*Math.sin(ph);im[h*k]+=a*sc*Math.cos(ph)})}
+    w=ctx.createPeriodicWave(re,im,{disableNormalization:true});if(gwCache.size>400)gwCache.clear();gwCache.set(ck,w);
+  }
+  const dom=R.reduce((a,b)=>b.feet>a.feet?b:a);const T=TYPES[dom.type];
+  const t=ctx.currentTime+.003;const sq=Math.sqrt(dom.fr);
+  const atk=T.atk*(.6+6/sq),rel=T.reed?.04+.4/sq:.06+.9/sq;
+  const o=ctx.createOscillator();o.setPeriodicWave(w);o.frequency.value=f0;
+  const base=(dom.st.det||0)+(Math.random()*2-1)*(opt.rVento?1.5:.4);
+  o.detune.setValueAtTime(base+(T.blip||0),t);o.detune.setTargetAtTime(base,t,atk*.5);
+  const wd=opt.mantice;if(wd)out.windDet.connect(o.detune);
+  const gn=ctx.createGain();gn.gain.setValueAtTime(0,t);gn.gain.linearRampToValueAtTime(1,t+atk);
+  o.connect(gn);gn.connect(D.input);o.start(t);
+  const p={o,g:gn,rel,n:R.length,w:R.reduce((s2,r)=>s2+.4+Math.sqrt(r.feet)/4,0)};
+  if(!T.reed&&T.chiff){
+    const amp=.12*dom.st.g*pitchComp(dom.fr)*T.chiff*Math.min(2,Math.sqrt(R.length));
+    const fc=Math.min(14000,dom.fr*T.cH),bw=fc/T.cQ,norm=1/(.577*Math.sqrt(bw/(ctx.sampleRate/2)));
+    const s=ctx.createBufferSource();s.buffer=noiseBuf;const bp=ctx.createBiquadFilter();bp.type='bandpass';bp.frequency.value=fc;bp.Q.value=T.cQ;
+    const ng=ctx.createGain();const dec=T.cD*(.6+4/sq);
+    ng.gain.setValueAtTime(0,t);ng.gain.linearRampToValueAtTime(amp*norm,t+.006+atk*.15);ng.gain.setTargetAtTime(0,t+.01+atk*.2,dec/3);
+    s.connect(bp).connect(ng).connect(D.input);s.start(t,Math.random()*1.5);try{s.stop(t+dec*5+.1)}catch(e){}
+    p.s=s;p.ng=ng;
+  }
+  o.onended=()=>{if(wd){try{out.windDet.disconnect(o.detune)}catch(e){}}try{gn.disconnect()}catch(e){}if(p.ng){try{p.ng.disconnect()}catch(e){}}};
+  active.set(key,p);weightSum+=p.w;
+}
+
 /* ===================== LOGICA DELLE NOTE ===================== */
 function heldNotes(){return [...new Set([...held.keys(),...sustained])].sort((a,b)=>a-b)}
 function computeDesired(){
@@ -432,9 +490,9 @@ function computeDesired(){
 }
 function sync(){
   if(ctx){
-    const want=computeDesired();
+    let want=computeDesired();if(light())want=groupDesired(want);
     for(const [k,p] of [...active])if(!want.has(k))stopPipe(k,p);
-    for(const [k,v] of want)if(!active.has(k))startPipe(k,v[0],v[1],v[2]);
+    for(const [k,v] of want)if(!active.has(k)){if(Array.isArray(v))startPipe(k,v[0],v[1],v[2]);else startGroup(k,v)}
   }
   renderKeys();
 }
@@ -599,7 +657,7 @@ function renderGauges(){const ge=document.querySelector('#gExpr i');if(ge)ge.sty
   const gw=document.getElementById('gWind');if(gw){gw.firstChild.style.width=(wind*100)+'%';gw.classList.toggle('low',wind<.2)}}
 function renderInfo(){
   $('#stMidi').innerHTML='MIDI: <b>'+(midiNames==null?'—':(midiNames.length?midiNames.join(', '):'nessuna tastiera trovata'))+'</b>'+(sustainOn?' &middot; <b>Hold</b>':'');
-  $('#stInfo').innerHTML='Temperamento <b>'+TEMPS[opt.temp].n+'</b> &middot; La = <b>'+opt.pitch+' Hz</b> &middot; Canne in suono: <b>'+[...active.values()].filter(p=>!p.dead).length+'</b>';
+  $('#stInfo').innerHTML='Temperamento <b>'+TEMPS[opt.temp].n+'</b> &middot; La = <b>'+opt.pitch+' Hz</b> &middot; Canne in suono: <b>'+[...active.values()].reduce((a,p)=>a+(p.dead?0:(p.n||1)),0)+'</b>';
 }
 const COARSE=matchMedia('(pointer:coarse)').matches;let KMIN=36,KMAX=96;
 function renderKbd(){if(COARSE){KMIN=36+octShift*12;KMAX=KMIN+36}const K=$('#kbd');K.innerHTML='';const isB=m=>[1,3,6,8,10].includes(m%12);
