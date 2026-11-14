@@ -351,7 +351,7 @@ button,.knob,.wk,.bk{touch-action:manipulation;-webkit-tap-highlight-color:trans
 
 <script>
 'use strict';
-const VERSIONE='2026.11.12-6'; // aggiornare a ogni nuova versione (anno.mese.giorno-n)
+const VERSIONE='2026.11.14-1'; // aggiornare a ogni nuova versione (anno.mese.giorno-n)
 const $=s=>document.querySelector(s);
 const NOTE_IT=['Do','Do#','Re','Mib','Mi','Fa','Fa#','Sol','Sol#','La','Sib','Si'];
 
@@ -634,7 +634,9 @@ function fillSmp(){document.querySelectorAll('.smpr').forEach(r=>r.style.display
 
 /* ===================== AUDIO ===================== */
 function initAudio(){
-  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:light()?'playback':'interactive'});
+  /* Latenza 'interactive' con entrambi i motori (14/11/2026): con 'playback' il Leggero sul Galaxy arrivava
+     quasi a un secondo di ritardo. L'utente preferisce qualche scricchiolio a un ritardo. */
+  ctx=new (window.AudioContext||window.webkitAudioContext)({latencyHint:'interactive'});
   const sr=ctx.sampleRate;
   noiseBuf=ctx.createBuffer(1,sr*2,sr);const nd=noiseBuf.getChannelData(0);for(let i=0;i<nd.length;i++)nd[i]=Math.random()*2-1;
   out.master=ctx.createGain();out.master.gain.value=vol;
@@ -654,7 +656,7 @@ function initAudio(){
   if(!windLoop.timer)windLoop.timer=setInterval(windLoop,40);
 }
 
-/* Cambio di motore senza ricaricare: il contesto audio si chiude e si riapre con la latenza adatta.
+/* Cambio di motore senza ricaricare: il contesto audio si chiude e si riapre (la latenza ora è la stessa).
    Onde (PeriodicWave), riverbero e divisioni appartengono al contesto: si rifanno. I campioni (AudioBuffer) restano. */
 function riapriAudio(){if(!ctx)return;
   stopAll(true);fermaCode();teardownDivs();const vecchio=ctx;
@@ -1064,7 +1066,10 @@ function showTab(t){optTab=t;document.querySelectorAll('#optTabs button').forEac
 document.querySelectorAll('#optTabs button').forEach(b=>b.onclick=()=>showTab(b.dataset.t));
 $('#optBtn').onclick=()=>{fillOpts();document.querySelector('#optTabs [data-t=ven]').textContent=INST.pluck?'Rumori':'Vento e rumori';document.querySelector('#optTabs .smpt').style.display=SMP_OK?'':'none';if(optTab==='smp'&&!SMP_OK)optTab='acc';showTab(optTab);$('#opts').showModal()};
 $('#verInfo').textContent='Versione '+VERSIONE;
-$('#helpBtn').onclick=()=>$('#helpDlg').showModal();
+/* ritardo dell'audio come lo dichiara il browser (buffer + uscita), per misurarlo sul tablet */
+function testoLatenza(){if(!ctx)return'';const b=ctx.baseLatency||0,o=ctx.outputLatency||0;if(!b&&!o)return'';
+  return' · ritardo audio ≈ '+Math.round((b+o)*1000)+' ms'+(o?' ('+Math.round(b*1000)+' + '+Math.round(o*1000)+')':'')}
+$('#helpBtn').onclick=()=>{$('#verInfo').textContent='Versione '+VERSIONE+testoLatenza();$('#helpDlg').showModal()};
 $('#o_temp').onchange=e=>{opt.temp=e.target.value;saveOpts();applyOpts(true);renderInfo()};
 $('#o_pitch').onchange=e=>{opt.pitch=+e.target.value;saveOpts();applyOpts(true);renderInfo()};
 $('#o_pedal').onchange=e=>{opt.pedal=e.target.value;saveOpts();renderCtrls();sync()};

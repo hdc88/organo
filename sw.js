@@ -3,7 +3,7 @@
    Ogni nuova generazione cambia CACHE, quindi il browser installa il nuovo service worker;
    il nuovo resta in attesa finché l'utente non tocca «Aggiorna» (messaggio 'aggiorna'). */
 'use strict';
-const CACHE = 'organo-2026.11.12-6-ffe83431';
+const CACHE = 'organo-2026.11.14-1-aed86590';
 const FILE = ["./", "index.html", "manifest.webmanifest", "icona-192.png", "icona-512.png"];
 
 self.addEventListener('install', e => {
