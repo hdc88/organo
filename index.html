@@ -351,7 +351,7 @@ button,.knob,.wk,.bk{touch-action:manipulation;-webkit-tap-highlight-color:trans
 
 <script>
 'use strict';
-const VERSIONE='2026.11.14-1'; // aggiornare a ogni nuova versione (anno.mese.giorno-n)
+const VERSIONE='2026.11.14-2'; // aggiornare a ogni nuova versione (anno.mese.giorno-n)
 const $=s=>document.querySelector(s);
 const NOTE_IT=['Do','Do#','Re','Mib','Mi','Fa','Fa#','Sol','Sol#','La','Sib','Si'];
 
@@ -1025,11 +1025,16 @@ function renderCtrls(){
     fsb.onclick=()=>{const q=document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();if(q&&q.catch)q.catch(()=>{})};C.appendChild(fsb)}
   renderGauges();refreshPistons();
 }
-function renderGauges(){const ge=document.querySelector('#gExpr i');if(ge)ge.style.width=(expr*100)+'%';
-  const gw=document.getElementById('gWind');if(gw){gw.firstChild.style.width=(wind*100)+'%';gw.classList.toggle('low',wind<.2)}}
+/* Indicatori e riga informativa: si scrive nella pagina SOLO se il valore cambia (14/11/2026).
+   Prima si riscrivevano 25 e 4 volte al secondo: sul tablet, con le pelli, la pagina restava sempre
+   occupata a ridisegnare e i messaggi MIDI della MicroLab aspettavano in fila (ritardo e note a grappoli). */
+function scriviSeCambia(e,prop,v){if(e&&e['_'+prop]!==v){e['_'+prop]=v;if(prop==='html')e.innerHTML=v;else e.style[prop]=v}}
+function renderGauges(){scriviSeCambia(document.querySelector('#gExpr i'),'width',Math.round(expr*100)+'%');
+  const gw=document.getElementById('gWind');if(gw){scriviSeCambia(gw.firstChild,'width',Math.round(wind*100)+'%');
+    const basso=wind<.2;if(gw._basso!==basso){gw._basso=basso;gw.classList.toggle('low',basso)}}}
 function renderInfo(){
-  $('#stMidi').innerHTML='MIDI: <b>'+(midiNames==null?'—':(midiNames.length?midiNames.join(', '):'nessuna tastiera trovata'))+'</b>'+(sustainOn?' &middot; <b>Hold</b>':'');
-  $('#stInfo').innerHTML=(INST.smpOnly&&opt.smpTune==='orig'?'Accordatura <b>originale delle canne</b>':'Temperamento <b>'+TEMPS[opt.temp].n+'</b> &middot; La = <b>'+opt.pitch+' Hz</b>')+' &middot; '+(INST.pluck?'Corde':'Canne')+' in suono: <b>'+[...active.values()].reduce((a,p)=>a+p.conteggio,0)+'</b>'+(smp.msg?' &middot; Campioni: <b>'+smp.msg+'</b>':'');
+  scriviSeCambia($('#stMidi'),'html','MIDI: <b>'+(midiNames==null?'—':(midiNames.length?midiNames.join(', '):'nessuna tastiera trovata'))+'</b>'+(sustainOn?' &middot; <b>Hold</b>':''));
+  scriviSeCambia($('#stInfo'),'html',(INST.smpOnly&&opt.smpTune==='orig'?'Accordatura <b>originale delle canne</b>':'Temperamento <b>'+TEMPS[opt.temp].n+'</b> &middot; La = <b>'+opt.pitch+' Hz</b>')+' &middot; '+(INST.pluck?'Corde':'Canne')+' in suono: <b>'+[...active.values()].reduce((a,p)=>a+p.conteggio,0)+'</b>'+(smp.msg?' &middot; Campioni: <b>'+smp.msg+'</b>':''));
 }
 let KMIN=36,KMAX=96;
 function renderKbd(){if(TOCCO){KMIN=36+octShift*12;KMAX=KMIN+36}const K=$('#kbd');K.innerHTML='';const isB=m=>[1,3,6,8,10].includes(m%12);
